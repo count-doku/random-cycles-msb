@@ -5,6 +5,7 @@ Created on Fri Mar 25 11:37:01 2022
 @author: KDominic
 """
 
+import csv
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -97,6 +98,7 @@ def plot_profile(time, profile, ts, cc_init=3600, C=7200):
     ax.plot(time, profile, marker=None, drawstyle='steps-post', linewidth=0.1)
     ax.set(xlabel='time in s', ylabel='current in A', title=f'mean(I): {np.mean(profile)}')
     plt.tight_layout()
+    plt.savefig('current.png')
     
     cc = coulombCounter(init_value=cc_init, C=C)
     SoC = []
@@ -107,6 +109,7 @@ def plot_profile(time, profile, ts, cc_init=3600, C=7200):
     ax.plot(time, SoC, marker=None, linewidth=0.1)
     ax.set(xlabel='time in s', ylabel='SoC', title=f'mean(SoC): {np.mean(SoC)}')
     plt.tight_layout()
+    plt.savefig('SoC.png')
     
     
 def create_profile(ts, n_cycles, I_choice=[1, 2, 3, 4], DSoC=0.5, verbose=False):
@@ -123,6 +126,14 @@ def create_profile(ts, n_cycles, I_choice=[1, 2, 3, 4], DSoC=0.5, verbose=False)
     return profile
     
 
+def save_profile(time, profile):
+    f = open('profile.csv', 'w')
+    writer = csv.writer(f)
+    for t, I in zip(time, profile):
+        writer.writerow([t, I])
+    f.close()
+    
+    
 if __name__ == '__main__':
     ts = 10
     n_cycles = 600
@@ -131,10 +142,11 @@ if __name__ == '__main__':
     profile.append(create_profile(ts, n_cycles, [1, 2, 3, 4], 0.5, verbose=False))
     for n in range(n_cycles):
         profile.append(create_cycle(np.random.choice([1, 2, 3, 4]), 7200, roll_dice(), ts, verbose=False))
-    profile.append(create_profile(ts, n_cycles, [1, 2, 3, 4], 0.2, verbose=False))
+    profile.append(create_profile(ts, n_cycles, [1, 2, 3, 4], 0.1, verbose=False))
     profile = np.concatenate(profile)
     time = [0]
     [time.append(time[i]+ts) for i in range(len(profile)-1)]
     
     plot_profile(time, profile, ts)
+    save_profile(time, profile)
     
