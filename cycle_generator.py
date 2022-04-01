@@ -127,8 +127,9 @@ def create_profile(ts, n_cycles, I_choice=[1, 2, 3, 4], DSoC=0.5, verbose=False)
     
 
 def save_profile(time, profile):
-    f = open('profile.csv', 'w')
+    f = open('alterungszyklen.csv', 'w', newline='')
     writer = csv.writer(f)
+    writer.writerow(['time (s)', 'current (A)'])
     for t, I in zip(time, profile):
         writer.writerow([t, I])
     f.close()
