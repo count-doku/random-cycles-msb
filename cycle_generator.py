@@ -70,9 +70,11 @@ class coulombCounter():
         
 
 def roll_dice():
-    if np.random.random() <= 0.5:
+    if np.random.random() <= 0.2:
+        # Full cycle
         return 0.5
     else:
+        # 20% cycle
         return 0.1
 
 
