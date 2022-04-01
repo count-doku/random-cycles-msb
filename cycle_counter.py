@@ -11,13 +11,39 @@ import matplotlib.pyplot as plt
 
 
 class cycle_counter():
+    """
+    Count cycles of shape:
+          
+          /\
+         /  \
+   SoC  /    \
+              \    /
+               \  /
+                \/
+                
+      I ___      ___
+          |     |
+          |     |
+          |_____|
+    """
     def __init__(self, CN):
+        """
+        CN: Nominal capcity
+        n_cycles: Cycle counter
+        idx: Sample index
+        """
         self.CN = CN
         self.n_cycles = 0
         self.idx = 0
     
     
     def count_cycle(self, Q_init, current_profile, ts):
+        """
+        Count cycle
+        Q_init: Initial charge (As)
+        current_profile: Current profile
+        ts: Sample time (s)
+        """
         # Initial charge
         Q = Q_init
         
@@ -65,6 +91,10 @@ class cycle_counter():
             
 
 def reduce_capacity(CN, cycle, n_cycles, CN_init):
+    """
+    Reduce capacity after given aging curve.
+    Uncomment lines to demonstrate typical error (jumping between LUTs)
+    """
     if cycle == 'full':
         # CN = 7200 - CN*0.2/2000*n_cycles
         CN = CN - CN_init*0.2/2000
@@ -78,6 +108,10 @@ def reduce_capacity(CN, cycle, n_cycles, CN_init):
     
     
 if __name__ == '__main__':
+    """
+    Count cycles of given current profile in csv file.
+    Plot CN evolution result and show amount of cycle types.
+    """
     f = open('alterungszyklen.csv', 'r')
     reader = csv.reader(f)
     current = []
