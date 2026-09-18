@@ -1,0 +1,24 @@
+[project]
+name = "battery-cycle-lab"
+version = "1.0.0"
+description = "Synthetic battery aging profiles and an equivalent-full-cycle counter, used as a teaching exercise"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Dominic Kupfer", email = "dominic.kupfer@gmx.net" }]
+dependencies = [
+    "matplotlib>=3.8,<4",
+    "numpy>=1.26,<3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4,<9",
+    "ruff>=0.14,<1",
+]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
