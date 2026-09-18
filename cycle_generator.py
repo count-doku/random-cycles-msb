@@ -1,174 +1,181 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Mar 25 11:37:01 2022
+r"""Generate a synthetic battery aging current profile.
 
-@author: KDominic
+The profile is a chain of symmetric charge/discharge cycles around a mid
+state of charge (SoC). One cycle looks like this::
+
+    SoC   /\
+         /  \
+             \    /
+              \  /
+               \/
+
+    I   ___      ___
+           |    |
+           |____|
+
+Each cycle starts and ends at the same SoC, so the profile is charge neutral
+by construction. That is what makes it usable as a reference for the counter
+in ``cycle_counter.py``: the counted depth of discharge must come back out of
+the signal exactly as it was put in.
+
+Running this module writes ``aging_profile.csv`` plus two plots.
 """
 
 import csv
-import numpy as np
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+import numpy as np
+
+CAPACITY_AS = 7200.0  # Nominal capacity C_N in ampere seconds (2 Ah)
+SAMPLE_TIME_S = 10.0  # Sample time of the generated profile
+CURRENT_CHOICES_A = (1, 2, 3, 4)  # C-rates 0.5 C ... 2 C at C_N = 2 Ah
+CYCLES_PER_SEGMENT = 600
+PROFILE_CSV = Path("aging_profile.csv")
+
+# Delta SoC of the first quarter cycle. The full cycle swings 0.5 up and
+# 0.5 down, hence DoD = 1.0; the partial cycle swings 0.1, hence DoD = 0.2.
+FULL_CYCLE_DSOC = 0.5
+PARTIAL_CYCLE_DSOC = 0.1
+PARTIAL_CYCLE_SHARE = 0.8  # Share of partial cycles in the mixed segment
 
 
-class coulombCounter():
+class CoulombCounter:
+    """Integrate current into charge, with coulombic efficiency and self discharge.
+
+    Charge is counted in ampere seconds. Efficiency is applied on the charging
+    direction only, because the loss happens when pushing charge in.
     """
-    Count charge and take coulombic efficiency and self-discharge current
-    into account.
-    """
-    def __init__(self, init_value=0, eta=1, i_sd=0.000, C=3600):
-        self.charge = init_value  # Initial charge in As
-        self.eta = eta  # Efficiency
-        self.C = C  # Capacity
-        self.i_sd = i_sd  # Self discharge current
-        
-    def step(self, I, ts):
-        if I >= 0:    
-            self.charge += self.eta*ts*I  # Charging direction
+
+    def __init__(self, init_value=0.0, eta=1.0, i_sd=0.0, capacity=CAPACITY_AS):
+        self.charge = init_value  # Charge in As
+        self.eta = eta  # Coulombic efficiency
+        self.capacity = capacity  # Nominal capacity in As
+        self.i_sd = i_sd  # Self discharge current in A
+
+    def step(self, current, ts):
+        """Integrate one sample and return the new charge and SoC."""
+        if current >= 0:
+            self.charge += self.eta * ts * current  # Charging
         else:
-            self.charge += ts*I  # Discharging direction
-        
-        self.charge -= self.i_sd*ts
-        
-        return self.charge, self.getSOC()
-    
-    def getSOC(self):
-        soc = self.charge/self.C  # SOC
-        
-        return soc
-        
+            self.charge += ts * current  # Discharging
 
-def roll_dice():
-    if np.random.random() <= 0.2:
-        # Full cycle
-        return 0.5
-    else:
-        # 20% cycle
-        return 0.1
+        self.charge -= self.i_sd * ts
+
+        return self.charge, self.soc
+
+    @property
+    def soc(self):
+        """State of charge as a fraction of the nominal capacity."""
+        return self.charge / self.capacity
 
 
-def create_cycle(I, CN, DSoC, ts, verbose=False):
+def draw_cycle_depth(rng):
+    """Draw the delta SoC of one cycle for the mixed segment."""
+    if rng.random() < PARTIAL_CYCLE_SHARE:
+        return PARTIAL_CYCLE_DSOC
+    return FULL_CYCLE_DSOC
+
+
+def create_cycle(current, delta_soc, ts, capacity=CAPACITY_AS):
+    """Create the current samples of one symmetric cycle.
+
+    The cycle runs up by ``delta_soc``, down by ``2 * delta_soc`` and back up
+    by ``delta_soc``, so it returns to its starting SoC.
+
+    Raises ``ValueError`` if the quarter cycle is not a whole number of
+    samples, because a fractional sample would silently bias the charge
+    balance and break the round trip through the counter.
     """
-    Create one cycle from SoCx over SoCx to SoCx.
-    E.g. for DoD = 1:
-        SoC = 0.5 <---------------.
-        Charge till SoC = 1       |
-        Discharge till SoC = 0    |
-        Charge till SoC = 0.5 <---'
-    I: Current (A) 
-    CN: Capacity (As)
-    DSoC: Delta SoC for the first part (1) 
-     /\      
-    /  \    _____
-        \  /    DSoC
-         \/______
-    ts: Sample time
+    quarter_duration = capacity / current * delta_soc  # Duration in s
+    n_samples = quarter_duration / ts
+
+    if not float(n_samples).is_integer():
+        raise ValueError(
+            "quarter cycle must be a whole number of samples, got "
+            f"{n_samples} (I={current} A, dSoC={delta_soc}, ts={ts} s)"
+        )
+
+    n_samples = int(n_samples)
+    return n_samples * [current] + 2 * n_samples * [-current] + n_samples * [current]
+
+
+def create_profile(n_cycles, delta_soc, ts=SAMPLE_TIME_S, rng=None):
+    """Chain ``n_cycles`` cycles of fixed depth with randomly drawn currents.
+
+    Pass ``delta_soc=None`` to draw the depth per cycle as well, which gives
+    the mixed segment.
     """
-    t = CN/I*DSoC  # Time (s)
-    ns = t/ts  # No. of samples 
-    
-    # Check if ns is an even number, else raise error
-    if ns.is_integer():
-        ns = int(ns)  # Convert ns to int 
-        cycle = ns*[I] + 2*ns*[-I] + ns*[I]  # Create current
-        time = np.arange(0, 4*t, ts)  # Create time
-        if verbose:
-            fig, ax = plt.subplots()
-            ax.plot(time, cycle)
-            ax.set(xlabel='time in s', ylabel='current in A')
-            plt.tight_layout()
-        return cycle
-    else:
-        raise ValueError(f"ns should be integer;\n ns={ns}\n I={I}\n DSoC={DSoC}\n t={t}\n ts={ts}")
-    
-    
-def plot_profile(time, profile, ts, cc_init=3600, C=7200):
-    """
-    Plot current profile.
-    time: Time array
-    profile: Current array
-    ts: Sample time for coulomb counter (s)
-    """
+    rng = rng or np.random.default_rng()
+    segments = []
+    for _ in range(n_cycles):
+        current = rng.choice(CURRENT_CHOICES_A)
+        depth = draw_cycle_depth(rng) if delta_soc is None else delta_soc
+        segments.append(create_cycle(current, depth, ts))
+    return np.concatenate(segments)
+
+
+def plot_profile(time, profile, ts, initial_charge=0.5 * CAPACITY_AS):
+    """Plot the current profile and the SoC it produces."""
     fig, ax = plt.subplots(figsize=(15, 5))
-    ax.plot(time, profile, marker=None, drawstyle='steps-post', linewidth=0.1)
-    ax.set(xlabel='time in s', ylabel='current in A', title=f'mean(I): {np.mean(profile)}')
-    plt.tight_layout()
-    plt.savefig('current.png')
-    
-    cc = coulombCounter(init_value=cc_init, C=C)
-    SoC = []
-    for i in profile:
-        SoC.append(cc.getSOC())
-        cc.step(i, ts)
-        
-    fig, ax = plt.subplots(figsize=(15, 5))
-    ax.plot(time, SoC, marker=None, linewidth=0.1)
-    ax.set(xlabel='time in s', ylabel='SoC', title=f'mean(SoC): {np.mean(SoC)}')
-    plt.tight_layout()
-    plt.savefig('SoC.png')
-    
-    
-def create_profile(ts, n_cycles, I_choice=[1, 2, 3, 4], DSoC=0.5, verbose=False):
-    """
-    Create profile.
-    ts: Sample time (s)
-    n_cycles: No. of cycles
-    I_choice: Choice for current (A)
-    DSoC: Delta SoC for first part, 2*DSoC=DDoD (s)
-    """
-    profile = []
-    for n in range(n_cycles):
-        I = np.random.choice(I_choice)
-        cycle = create_cycle(I, 7200, DSoC, ts, verbose=False)
-        profile.append(cycle)
-    profile = np.concatenate(profile)
-    time = [0]
-    [time.append(time[i]+ts) for i in range(len(profile)-1)]
-    if verbose:
-        plot_profile(time, profile, ts)
-    return profile
-    
+    ax.plot(time, profile, drawstyle="steps-post", linewidth=0.1)
+    ax.set(
+        xlabel="time in s",
+        ylabel="current in A",
+        title=f"mean(I): {np.mean(profile):.3g} A",
+    )
+    fig.tight_layout()
+    fig.savefig("current.png")
 
-def save_profile(time, profile):
+    counter = CoulombCounter(init_value=initial_charge)
+    soc = []
+    for current in profile:
+        soc.append(counter.soc)
+        counter.step(current, ts)
+
+    fig, ax = plt.subplots(figsize=(15, 5))
+    ax.plot(time, soc, linewidth=0.1)
+    ax.set(xlabel="time in s", ylabel="SoC", title=f"mean(SoC): {np.mean(soc):.3g}")
+    fig.tight_layout()
+    fig.savefig("SoC.png")
+
+
+def save_profile(time, profile, path=PROFILE_CSV):
+    """Write the profile as a two column csv."""
+    with open(path, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["time (s)", "current (A)"])
+        writer.writerows(zip(time, profile, strict=True))
+
+
+def build_aging_profile(ts=SAMPLE_TIME_S, n_cycles=CYCLES_PER_SEGMENT, rng=None):
+    """Build the three segment aging profile used in the exercise.
+
+    Segment 1: full cycles only.
+    Segment 2: mixed, 20 % full and 80 % partial cycles.
+    Segment 3: partial cycles only.
+
+    The mixed segment is the interesting one: a counter that only looks at
+    current sign changes cannot tell the two cycle depths apart there.
     """
-    Save profile.
-    time: Time array
-    profile: Current profile
-    """
-    f = open('alterungszyklen.csv', 'w', newline='')
-    writer = csv.writer(f)
-    writer.writerow(['time (s)', 'current (A)'])
-    for t, I in zip(time, profile):
-        writer.writerow([t, I])
-    f.close()
-    
-    
-if __name__ == '__main__':
-    """
-    Create profile with 3 segments and different current amplitudes:
-        600 full cycles
-        600 mixed cycles (20% full cycles, 80% part cycles)
-        600 part cycles
-    """
-    ts = 10  # Sample time (s)
-    n_cycles = 600  # 600 Cycles per segment
-    profile = []
-    
-    # 600 full cycles
-    profile.append(create_profile(ts, n_cycles, [1, 2, 3, 4], 0.5, verbose=False))
-    
-    # 600 mixed cycles
-    for n in range(n_cycles):
-        profile.append(create_cycle(np.random.choice([1, 2, 3, 4]), 7200, roll_dice(), ts, verbose=False))
-    
-    # 600 part cycles
-    profile.append(create_profile(ts, n_cycles, [1, 2, 3, 4], 0.1, verbose=False))
-    
-    profile = np.concatenate(profile)  # Concat profile
-    
-    # Create time array
-    time = [0]
-    [time.append(time[i]+ts) for i in range(len(profile)-1)]
-    
-    plot_profile(time, profile, ts)  # Plot 
-    # save_profile(time, profile)  # Save
-    
+    rng = rng or np.random.default_rng()
+    return np.concatenate(
+        [
+            create_profile(n_cycles, FULL_CYCLE_DSOC, ts, rng),
+            create_profile(n_cycles, None, ts, rng),
+            create_profile(n_cycles, PARTIAL_CYCLE_DSOC, ts, rng),
+        ]
+    )
+
+
+def main():
+    profile = build_aging_profile()
+    time = np.arange(len(profile)) * SAMPLE_TIME_S
+
+    plot_profile(time, profile, SAMPLE_TIME_S)
+    save_profile(time, profile)
+    print(f"{len(profile)} samples written to {PROFILE_CSV}")
+
+
+if __name__ == "__main__":
+    main()
